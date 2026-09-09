@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="不動産登記PDFを端末内で解析し、根拠付きのExcelへ整理します。">
+  <title>謄本テーブル</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">LOCAL DOCUMENT PARSER</p>
+      <h1>謄本テーブル</h1>
+    </div>
+    <div class="privacy"><span></span>PDFは端末外へ送信されません</div>
+  </header>
+
+  <main>
+    <section class="upload-panel" aria-labelledby="upload-title">
+      <div class="steps" aria-label="処理手順">
+        <span class="active">1 PDF選択</span><i></i><span>2 自動解析</span><i></i><span>3 確認・出力</span>
+      </div>
+      <button id="dropzone" class="dropzone" type="button">
+        <span class="upload-icon" aria-hidden="true">↑</span>
+        <strong id="upload-title">全部事項PDFを選択</strong>
+        <small>クリック、または複数ファイルをここにドロップ</small>
+        <em>PDFのみ・1回最大100件</em>
+      </button>
+      <input id="file-input" type="file" accept="application/pdf,.pdf" multiple hidden>
+      <div id="queue" class="queue hidden"></div>
+      <div class="action-row">
+        <button id="analyze" class="primary" type="button" disabled>解析する</button>
+        <button id="clear" class="secondary" type="button" disabled>クリア</button>
+        <p id="status" role="status">文字データ付きの土地・建物全部事項に対応しています。</p>
+      </div>
+      <div id="progress" class="progress hidden"><div></div></div>
+    </section>
+
+    <section id="results" class="results hidden" aria-labelledby="results-title">
+      <div class="results-head">
+        <div><p class="eyebrow">RESULTS</p><h2 id="results-title">解析結果</h2></div>
+        <button id="export" class="primary" type="button">Excelを出力</button>
+      </div>
+      <div id="metrics" class="metrics"></div>
+      <p class="guidance">黄色の「要確認」を優先して確認してください。白い入力欄は直接修正できます。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>判定</th><th>書類</th><th>所在</th><th>地番等</th><th>面積㎡</th><th>現在所有者</th><th>所有者住所</th><th>持分</th><th>取得原因</th><th>順位</th><th>注意・理由</th><th>根拠</th><th>ファイル名</th></tr></thead>
+          <tbody id="result-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>解析結果は確認支援用です。要確認の登記は原文と照合してください。</footer>
+  <script src="./jszip.min.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
