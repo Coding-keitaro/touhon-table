@@ -67,7 +67,7 @@ async function ocrPdf(file,onProgress){
 
 function section(text,start,end){const a=text.search(start);if(a<0)return"";const tail=text.slice(a);if(!end)return tail;const b=tail.search(end);return b>0?tail.slice(0,b):tail}
 function cells(line){return line.split(/[┃│|｜]/).map(cleanLine).filter(v=>v&&!/^[┠┨┯┷┬┴┼━─]+$/.test(v))}
-function baseResult(filename){return{filename,management_number:"",property_kind:"",document_type:"",as_of:"",real_estate_number:"",location:"",lot_number:"",house_number:"",one_building_name:"",exclusive_building_name:"",lot_or_building_number:"",land_category_or_building_type:"",area_sqm:"",structure:"",current_owner_name:"",current_owner_address:"",ownership_share:"",share:"",site_right_share:"",acquisition_cause:"",registration_date:"",registration_number:"",latest_rank:"",source_method:"文字データ",ocr_confidence:"",flags:"",status:"要確認",review_reason:"",evidence:""}}
+function baseResult(filename){return{filename,management_number:"",owner_index:"",owner_entries:[],property_kind:"",document_type:"",as_of:"",real_estate_number:"",location:"",lot_number:"",house_number:"",one_building_name:"",exclusive_building_name:"",lot_or_building_number:"",land_category_or_building_type:"",area_sqm:"",structure:"",current_owner_name:"",current_owner_address:"",ownership_share:"",share:"",site_right_share:"",acquisition_cause:"",registration_date:"",registration_number:"",latest_rank:"",source_method:"文字データ",ocr_confidence:"",flags:"",status:"要確認",review_reason:"",evidence:""}}
 
 function filenameMeta(filename,r){
   const f=nfkc(filename),no=f.match(/【\s*(\d+)/);if(no)r.management_number=no[1];
@@ -168,4 +168,19 @@ clear.onclick=()=>{state.files=[];state.rows=[];input.value="";analyze.disabled=
 analyze.onclick=async()=>{analyze.disabled=true;state.rows=[];progress.classList.remove("hidden");for(let i=0;i<state.files.length;i++){status.textContent=`解析中 ${i+1}/${state.files.length}: ${state.files[i].name}`;state.rows.push(await parseFile(state.files[i],(page,total,p)=>{status.textContent=`OCR読取中 ${i+1}/${state.files.length}・${page}/${total}ページ（${Math.round(p*100)}%）`}));progress.firstElementChild.style.width=`${(i+1)/state.files.length*100}%`}render();status.textContent=`${state.rows.length}件の解析が完了しました。`;analyze.disabled=false};
 const esc=xml;const inp=(r,k,i)=>`<input class="cell" data-i="${i}" data-k="${k}" value="${esc(r[k])}">`;
 function render(){const auto=state.rows.filter(r=>r.status==="自動確定").length,excluded=state.rows.filter(r=>r.document_type==="対象外").length,review=state.rows.filter(r=>r.status==="要確認"&&r.document_type!=="対象外").length;$("#metrics").innerHTML=`<div class="metric"><b>${state.rows.length}</b>全件</div><div class="metric"><b>${auto}</b>自動確定</div><div class="metric"><b>${review}</b>要確認</div><div class="metric"><b>${excluded}</b>対象外</div>`;$("#result-body").innerHTML=state.rows.map((r,i)=>`<tr><td><span class="badge ${r.status==="自動確定"?"ok":r.status==="エラー"?"error":"review"}">${esc(r.status)}</span></td><td>${inp(r,"management_number",i)}</td><td>${esc(r.property_kind)}</td><td>${inp(r,"location",i)}</td><td>${inp(r,"lot_number",i)}</td><td>${inp(r,"one_building_name",i)}</td><td>${inp(r,"house_number",i)}</td><td>${inp(r,"exclusive_building_name",i)}</td><td>${inp(r,"current_owner_name",i)}</td><td>${inp(r,"ownership_share",i)}</td><td>${inp(r,"site_right_share",i)}</td><td>${inp(r,"current_owner_address",i)}</td><td>${esc([r.flags,r.review_reason].filter(Boolean).join(" / "))}</td><td><details><summary>原文を見る</summary><pre>${esc(r.evidence)}</pre></details></td><td>${esc(r.source_method)}</td><td>${esc(r.filename)}</td></tr>`).join("");document.querySelectorAll(".cell").forEach(el=>el.oninput=e=>state.rows[Number(e.target.dataset.i)][e.target.dataset.k]=e.target.value);$("#results").classList.remove("hidden");$("#results").scrollIntoView({behavior:"smooth",block:"start"})}
+function ownerParts(value){return String(value||"").split(/\s*\/\s*/).map(v=>v.trim())}
+function finalizeOwnerRows(r){
+  if(r._owner_split)return[r];
+  const names=ownerParts(r.current_owner_name).filter(Boolean),shares=ownerParts(r.ownership_share),addresses=ownerParts(r.current_owner_address);
+  if(r.status==="要確認"&&r.source_method==="端末内OCR"){
+    const reasons=ownerParts(r.review_reason).filter(v=>!v.startsWith("OCR読取（精度目安"));
+    const complete=names.length>0&&shares.length===names.length&&shares.every(v=>v&&!v.includes("要確認"));
+    if(complete&&!reasons.length){r.status="自動確定";r.review_reason=""}
+  }
+  if(names.length<=1)return[{...r,_owner_split:true}];
+  if(shares.length!==names.length){r.status="要確認";r.review_reason=[r.review_reason,"所有者数と持分数が一致しません"].filter(Boolean).join(" / ");return[{...r,_owner_split:true}]}
+  return names.map((name,i)=>({...r,_owner_split:true,owner_index:`${i+1}/${names.length}`,current_owner_name:name,ownership_share:shares[i],share:shares[i],current_owner_address:addresses[i]||""}));
+}
+const renderParsedRows=render;
+render=()=>{state.rows=state.rows.flatMap(finalizeOwnerRows);renderParsedRows()};
 $("#export").onclick=()=>exportXlsx(state.rows);
