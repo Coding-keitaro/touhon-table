@@ -7,7 +7,7 @@ const state={files:[],rows:[]};
 const OCR_URLS={
   workerPath:new URL("./tesseract-worker.min.js",import.meta.url).href,
   langPath:new URL("./",import.meta.url).href,
-  corePath:new URL("./",import.meta.url).href
+  corePath:new URL("./tesseract-core-lstm.wasm.js",import.meta.url).href
 };
 let ocrWorkerPromise=null,ocrProgressSink=null;
 const $=s=>document.querySelector(s);
@@ -16,8 +16,13 @@ const compact=v=>nfkc(v).replace(/[\s　]+/g,"");
 const cleanLine=v=>nfkc(v).replace(BOX," ").replace(/\s+/g," ").trim();
 const stripPrivate=v=>v.replace(/[\uE000-\uF8FF]/g,"");
 
+function readFileArrayBuffer(file){
+  if(typeof file.arrayBuffer==="function")return file.arrayBuffer();
+  return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(reader.error||new Error("PDFを読み込めませんでした"));reader.readAsArrayBuffer(file)});
+}
+
 async function extractPdf(file){
-  const bytes=new Uint8Array(await file.arrayBuffer());
+  const bytes=new Uint8Array(await readFileArrayBuffer(file));
   const doc=await pdfjsLib.getDocument({data:bytes,useWorkerFetch:false,isEvalSupported:false}).promise;
   const pages=[];
   for(let pageNo=1;pageNo<=doc.numPages;pageNo++){
@@ -38,12 +43,13 @@ function textQuality(text){const c=compact(text);return ["表題部","権利部"
 async function getOcrWorker(){
   if(!ocrWorkerPromise){
     if(!globalThis.Tesseract)throw new Error("OCR部品を読み込めませんでした");
-    ocrWorkerPromise=Tesseract.createWorker("jpn",1,{...OCR_URLS,gzip:true,logger:m=>{if(ocrProgressSink&&m.status==="recognizing text")ocrProgressSink(m.progress||0)}});
+    ocrWorkerPromise=Tesseract.createWorker("jpn",1,{...OCR_URLS,gzip:true,logger:m=>{if(ocrProgressSink&&m.status==="recognizing text")ocrProgressSink(m.progress||0)}})
+      .catch(err=>{ocrWorkerPromise=null;throw err});
   }
   return ocrWorkerPromise;
 }
 async function ocrPdf(file,onProgress){
-  const bytes=new Uint8Array(await file.arrayBuffer());
+  const bytes=new Uint8Array(await readFileArrayBuffer(file));
   const doc=await pdfjsLib.getDocument({data:bytes,useWorkerFetch:false,isEvalSupported:false}).promise;
   const worker=await getOcrWorker(),pages=[],conf=[];
   for(let pageNo=1;pageNo<=doc.numPages;pageNo++){
@@ -70,6 +76,9 @@ function filenameMeta(filename,r){
   if(!m)return;r.location=m[1];const number=m[2];
   if(r.property_kind==="土地")r.lot_number=number;
   else{r.house_number=number;const parts=number.split("-");r.lot_number=parts.slice(0,Math.min(2,parts.length)).join("-")}
+}
+function isNonRegistryFile(filename){
+  return /[（(](?:地図|公図|地積測量図|建物図面|各階平面図|地役権図面)[）)]/.test(nfkc(filename));
 }
 function valueAfterLabel(lines,label){for(const raw of lines){const cs=cells(raw),cc=cs.map(compact);for(let i=0;i<cc.length;i++)if(cc[i]===label&&cs[i+1])return compact(cs[i+1]).replace(/余白/g,"")}return""}
 function supplementalTitle(text,r){const c=compact(text),sr=c.match(/[敷整]地権の割合.{0,120}?([0-9]+)分の([0-9]+)/);if(sr)r.site_right_share=`${sr[1]}分の${sr[2]}`;if(!r.as_of){const m=nfkc(text.slice(0,300)).match(/([0-9]{4})\s*\/\s*([0-9]{2})\s*\/\s*([0-9]{2})/);if(m)r.as_of=`${m[1]}-${m[2]}-${m[3]}`}}
@@ -103,7 +112,29 @@ function fraction(value){const m=compact(value).match(/([0-9]+)分の([0-9]+)/);
 function reduce(f){const g=gcd(f.n,f.d);return{n:f.n/g,d:f.d/g}}
 function addFraction(a,b){return reduce({n:a.n*b.d+b.n*a.d,d:a.d*b.d})}
 function fractionText(f){const x=reduce(f);return x.n===x.d?"全部":`${x.d}分の${x.n}`}
-function parseEntities(block,label){const raw=block.split("\n").map(v=>compact(cleanLine(v))).filter(Boolean);let start=-1,tail="";for(let i=0;i<raw.length;i++){const at=raw[i].indexOf(label);if(at>=0){start=i;tail=raw[i].slice(at+label.length);break}}if(start<0)return[];const tokens=[];if(tail)tokens.push(tail);for(const original of raw.slice(start+1)){let c=original.replace(/^第[0-9]+号/,"");if(!c)continue;if(/^(付記[0-9]+号|順位|原因|受付|会社法人等番号|信託目録|権利部)/.test(c))break;if(c)tokens.push(c)}const out=[];let current={address:"",share:""};for(let token of tokens){const sm=token.match(/(?:持分)?([0-9]+分の[0-9]+)/);if(sm&&compact(token)===compact(sm[0])){current.share=sm[1];continue}const combined=token.match(/^(.+?(?:号|番地(?:の[0-9]+)?))(.+)$/);if(combined&&ENTITY_WORDS.test(combined[2])){current.address+=combined[1];out.push({name:combined[2],address:current.address,share:current.share});current={address:"",share:""};continue}if(ADDRESS_START.test(token)){current.address+=token;continue}if(current.address&&(/[0-9]/.test(token)||/^(?:号|番地|地の|丁目|番)/.test(token))&&!ENTITY_WORDS.test(token)){current.address+=token;continue}if(current.address){out.push({name:token,address:current.address,share:current.share});current={address:"",share:""}}}return out.filter(x=>x.name)}
+const OWNER_NAME_BLOCKLIST=/(?:原因|順位|登記|受付|移記|規定|余白|会社法人等番号|信託目録|年月日|売買|相続)/;
+function looksLikeOwnerName(value){const v=compact(value);if(!v||OWNER_NAME_BLOCKLIST.test(v)||/[0-9]/.test(v))return false;if(ENTITY_WORDS.test(v))return true;return /^[一-龯々〆ヵヶぁ-んァ-ヶー・]{2,30}$/.test(v)}
+function parseEntities(block,label){
+  const raw=block.split("\n").map(v=>compact(cleanLine(v))).filter(Boolean);let start=-1,tail="";
+  for(let i=0;i<raw.length;i++){const at=raw[i].indexOf(label);if(at>=0){start=i;tail=raw[i].slice(at+label.length);break}}
+  if(start<0)return[];
+  const tokens=[];if(tail)tokens.push(tail);
+  for(const original of raw.slice(start+1)){let c=original.replace(/^第[0-9]+号/,"");if(!c)continue;if(/^(付記[0-9]+号|順位|原因|受付|会社法人等番号|信託目録|権利部)/.test(c))break;tokens.push(c)}
+  const out=[];let current={address:"",share:""};
+  const finish=name=>{name=compact(name).replace(/^(?:所有者|共有者|受託者)/,"");if(!looksLikeOwnerName(name))return false;out.push({name,address:current.address,share:current.share});current={address:"",share:""};return true};
+  for(let token of tokens){
+    token=token.replace(/^(?:所有者|共有者|受託者)/,"");
+    const sm=token.match(/(?:持分)?([0-9]+分の[0-9]+)/);
+    if(sm){current.share=sm[1];token=token.replace(sm[0],"")}
+    if(!token)continue;
+    const combined=token.match(/^(.+?(?:号|番地(?:の[0-9]+)?))(.+)$/);
+    if(combined&&looksLikeOwnerName(combined[2])){current.address+=combined[1];finish(combined[2]);continue}
+    if(ADDRESS_START.test(token)){current.address+=token;continue}
+    if(current.address&&(/[0-9]/.test(token)||/^(?:号|番地|地の|丁目|番)/.test(token))&&!ENTITY_WORDS.test(token)){current.address+=token;continue}
+    if(current.address||current.share){finish(token)}
+  }
+  return out.filter(x=>x.name)
+}
 function addOwner(ledger,owner,fallback=null){const f=fraction(owner.share)||fallback;if(!owner.name||!f)return false;const prior=ledger.get(owner.name);ledger.set(owner.name,{name:owner.name,address:owner.address||prior?.address||"",frac:prior?addFraction(prior.frac,f):reduce(f)});return true}
 function updateAttachedAddresses(kouku,ledger){const c=compact(kouku).replace(BOX,""),escape=v=>v.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");for(const owner of ledger.values()){const re=new RegExp(`共有者${escape(owner.name)}の住所((?:東京都|北海道|(?:京都|大阪)府|.{2,3}県|福岡市|北九州市|京都市).+?(?:号|番地(?:の[0-9]+)?))`),m=c.match(re);if(m)owner.address=m[1]}}
 
@@ -125,7 +156,7 @@ function parseKouku(text,r,isOcr=false){const kouku=rightsSection(text,"甲");if
   const flags=[],all=compact(text);if(compact(kouku).includes("差押"))flags.push("差押履歴");if(compact(kouku).includes("仮登記"))flags.push("仮登記");if(compact(kouku).includes("信託"))flags.push("信託");if(all.includes("抵当権"))flags.push("抵当権等");if(owners.length>1)flags.push(`共有${owners.length}名`);r.flags=flags.join(" / ");r.evidence=relevant.flatMap(x=>x.block.split("\n")).map(cleanLine).filter(Boolean).slice(-24).join("\n");const reasons=[...ledgerReasons];if(total.n!==total.d)reasons.push(`持分合計が100%になりません（${fractionText(total)}）`);if(flags.includes("信託"))reasons.push("信託登記のため受託者・受益関係の確認を推奨");r.status=reasons.length?"要確認":"自動確定";r.review_reason=reasons.join(" / ")
 }
 function parseTitleOwner(text,r){const lines=text.split("\n").map(cleanLine);for(let i=0;i<lines.length;i++){const c=compact(lines[i]);if(!c.includes("所有者"))continue;const block=[lines[i],lines[i+1]||""].join("\n"),entities=parseEntities(block,"所有者"),fallback=fallbackEntities(block),owners=entities.length?entities:fallback;if(owners.length){r.current_owner_name=owners.map(x=>x.name).join(" / ");r.current_owner_address=owners.map(x=>x.address).filter(Boolean).join(" / ");r.ownership_share=owners.length===1?"全部":owners.map(x=>x.share||"要確認").join(" / ");r.share=r.ownership_share;return}}}
-async function parseFile(file,onOcrProgress){const r=baseResult(file.name);filenameMeta(file.name,r);try{let text=await extractPdf(file),ocrUsed=false;if(textQuality(text)<3){const ocr=await ocrPdf(file,onOcrProgress);text=ocr.text;ocrUsed=true;r.source_method="端末内OCR";r.ocr_confidence=Math.round(ocr.confidence)}parseTitle(text,r);filenameMeta(file.name,r);supplementalTitle(text,r);if(r.document_type==="対象外"&&r.property_kind)r.document_type=`${r.property_kind}全部事項`;if(r.document_type==="対象外"){r.review_reason="土地・建物の全部事項証明書ではありません";return r}parseKouku(text,r,ocrUsed);if(!r.current_owner_name)parseTitleOwner(text,r);if(r.property_kind==="土地"&&compact(text).includes("敷地権")&&!r.current_owner_name){r.current_owner_name="敷地権化済み（専有部分の謄本参照）";r.flags=[r.flags,"敷地権化済み"].filter(Boolean).join(" / ")}if(r.property_kind==="建物"&&r.site_right_share&&!r.exclusive_building_name){const last=r.house_number.split("-").pop();if(last)r.exclusive_building_name=last}if(ocrUsed){const checks=[`OCR読取（精度目安${r.ocr_confidence}%）：所有者名・持分を原文確認`];if(compact(text).includes("一棟の建物")&&!r.one_building_name)checks.push("一棟の建物の名称を原文確認");r.status="要確認";r.review_reason=[...checks,r.review_reason].filter(Boolean).join(" / ");r.flags=[r.flags,"OCR"].filter(Boolean).join(" / ")}r.evidence=r.evidence||text.split("\n").map(cleanLine).filter(Boolean).slice(-30).join("\n")}catch(err){r.status="エラー";r.review_reason=`解析エラー: ${err?.message||err}`}return r}
+async function parseFile(file,onOcrProgress){const r=baseResult(file.name);filenameMeta(file.name,r);if(isNonRegistryFile(file.name)){r.document_type="対象外";r.status="対象外";r.source_method="ファイル名判定";r.review_reason="地図・図面PDFのため解析対象外";return r}try{let text=await extractPdf(file),ocrUsed=false;if(textQuality(text)<3){const ocr=await ocrPdf(file,onOcrProgress);text=ocr.text;ocrUsed=true;r.source_method="端末内OCR";r.ocr_confidence=Math.round(ocr.confidence)}parseTitle(text,r);filenameMeta(file.name,r);supplementalTitle(text,r);if(r.document_type==="対象外"&&r.property_kind)r.document_type=`${r.property_kind}全部事項`;if(r.document_type==="対象外"){r.review_reason="土地・建物の全部事項証明書ではありません";return r}parseKouku(text,r,ocrUsed);if(!r.current_owner_name)parseTitleOwner(text,r);if(r.property_kind==="土地"&&compact(text).includes("敷地権")&&!r.current_owner_name){r.current_owner_name="敷地権化済み（専有部分の謄本参照）";r.flags=[r.flags,"敷地権化済み"].filter(Boolean).join(" / ")}if(r.property_kind==="建物"&&r.site_right_share&&!r.exclusive_building_name){const last=r.house_number.split("-").pop();if(last)r.exclusive_building_name=last}if(ocrUsed){const checks=[`OCR読取（精度目安${r.ocr_confidence}%）：所有者名・持分を原文確認`];if(compact(text).includes("一棟の建物")&&!r.one_building_name)checks.push("一棟の建物の名称を原文確認");r.status="要確認";r.review_reason=[...checks,r.review_reason].filter(Boolean).join(" / ");r.flags=[r.flags,"OCR"].filter(Boolean).join(" / ")}r.evidence=r.evidence||text.split("\n").map(cleanLine).filter(Boolean).slice(-30).join("\n")}catch(err){r.status="エラー";r.review_reason=`解析エラー: ${err?.message||err}`}return r}
 
 const HEADERS=[["management_number","番号"],["property_kind","種別"],["one_building_name","一棟の建物の名称"],["location","所在"],["lot_number","地番"],["house_number","家屋番号"],["exclusive_building_name","専有部分の建物の名称"],["current_owner_name","現在所有者"],["ownership_share","所有権持分"],["site_right_share","敷地権割合"],["current_owner_address","所有者住所"],["as_of","証明書基準日"],["real_estate_number","不動産番号"],["land_category_or_building_type","地目・種類"],["area_sqm","地積・床面積㎡"],["structure","構造"],["acquisition_cause","取得原因"],["latest_rank","根拠順位番号"],["source_method","読取方法"],["ocr_confidence","OCR精度目安%"],["flags","注意事項"],["status","判定"],["review_reason","要確認理由"],["evidence","根拠原文"],["filename","ファイル名"]];
 const xml=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&apos;"}[c]));const col=n=>{let s="";while(n){n--;s=String.fromCharCode(65+n%26)+s;n=Math.floor(n/26)}return s};const cell=(ref,v,style=0)=>`<c r="${ref}" t="inlineStr" s="${style}"><is><t xml:space="preserve">${xml(v)}</t></is></c>`;
