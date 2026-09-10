@@ -25,14 +25,14 @@
         <span class="upload-icon" aria-hidden="true">↑</span>
         <strong id="upload-title">全部事項PDFを選択</strong>
         <small>クリック、または複数ファイルをここにドロップ</small>
-        <em>PDFのみ・1回最大100件</em>
+        <em>PDFのみ・1回最大100件／画像PDFはOCRへ自動切替</em>
       </button>
       <input id="file-input" type="file" accept="application/pdf,.pdf" multiple hidden>
       <div id="queue" class="queue hidden"></div>
       <div class="action-row">
         <button id="analyze" class="primary" type="button" disabled>解析する</button>
         <button id="clear" class="secondary" type="button" disabled>クリア</button>
-        <p id="status" role="status">文字データ付きの土地・建物全部事項に対応しています。</p>
+        <p id="status" role="status">土地・建物・区分建物の全部事項に対応しています。</p>
       </div>
       <div id="progress" class="progress hidden"><div></div></div>
     </section>
@@ -46,7 +46,7 @@
       <p class="guidance">黄色の「要確認」を優先して確認してください。白い入力欄は直接修正できます。</p>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>判定</th><th>書類</th><th>所在</th><th>地番等</th><th>面積㎡</th><th>現在所有者</th><th>所有者住所</th><th>持分</th><th>取得原因</th><th>順位</th><th>注意・理由</th><th>根拠</th><th>ファイル名</th></tr></thead>
+          <thead><tr><th>判定</th><th>番号</th><th>種別</th><th>所在</th><th>地番</th><th>一棟の建物の名称</th><th>家屋番号</th><th>専有部分の名称</th><th>現在所有者</th><th>所有権持分</th><th>敷地権割合</th><th>所有者住所</th><th>注意・理由</th><th>根拠</th><th>読取方法</th><th>ファイル名</th></tr></thead>
           <tbody id="result-body"></tbody>
         </table>
       </div>
@@ -55,6 +55,7 @@
 
   <footer>解析結果は確認支援用です。要確認の登記は原文と照合してください。</footer>
   <script src="./jszip.min.js"></script>
+  <script src="./tesseract.min.js"></script>
   <script type="module" src="./app.js"></script>
 </body>
 </html>
